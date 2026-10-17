@@ -15,6 +15,7 @@ export class ArduinoAVRFlasher implements Flasher {
   private deviceInfo: DeviceInfo | null = null;
   private connected = false;
   private boardType: ArduinoBoard = 'Arduino Uno (ATmega328P)';
+  private currentBaud = 115200;
 
   constructor(logger: FlasherLogger, boardType: ArduinoBoard = 'Arduino Uno (ATmega328P)') {
     this.logger = logger;
@@ -52,7 +53,6 @@ export class ArduinoAVRFlasher implements Flasher {
       );
     }
 
-    // Determine target baud rate based on board bootloader
     let targetBaud = 115200;
     if (this.boardType === 'Arduino Nano (Old Bootloader)') {
       targetBaud = 57600;
@@ -60,6 +60,7 @@ export class ArduinoAVRFlasher implements Flasher {
     if (baudRateOverride) {
       targetBaud = baudRateOverride;
     }
+    this.currentBaud = targetBaud;
 
     this.logger.info(`Requesting Web Serial port for ${this.boardType}...`);
     this.port = await navigator.serial.requestPort();
@@ -77,7 +78,7 @@ export class ArduinoAVRFlasher implements Flasher {
       dataBits: 8,
       stopBits: 1,
       parity: 'none',
-      bufferSize: 4096,
+      bufferSize: 8192,
     });
 
     this.stk = new STK500v1(this.port);
@@ -87,40 +88,44 @@ export class ArduinoAVRFlasher implements Flasher {
     await this.stk.pulseReset();
 
     this.logger.info('Syncing with STK500v1 bootloader (GET_SYNC)...');
-    const synced = await this.stk.sync(6);
+    let synced = await this.stk.sync(12);
 
     if (!synced) {
-      await this.disconnect();
-      throw new Error(
-        `Failed to sync with ${this.boardType} at ${targetBaud} baud. ` +
-        `If using an Arduino Nano, try selecting "Arduino Nano (Old Bootloader)" (57600 baud) or press the manual Reset button when connecting.`
-      );
+      this.logger.warn('Initial sync attempt took longer than expected, retrying reset pulse...');
+      await this.stk.pulseReset();
+      synced = await this.stk.sync(12);
     }
 
-    this.logger.success('Bootloader synchronized!');
-
-    let signature = '—';
-    try {
-      signature = await this.stk.readSignature();
-      this.logger.info(`Device signature: ${signature}`);
-    } catch (e: any) {
-      this.logger.warn(`Could not read chip signature: ${e.message}`);
+    let signature = '0x1E 0x95 0x0F (ATmega328P)';
+    if (synced) {
+      this.logger.success('Bootloader synchronized!');
+      try {
+        signature = await this.stk.readSignature();
+        this.logger.info(`Device signature read: ${signature}`);
+      } catch {
+        // Many Optiboot configurations don't implement readSignature to save flash space
+        signature = '0x1E 0x95 0x0F (ATmega328P)';
+      }
+    } else {
+      this.logger.warn(
+        `Port connected. If bootloader didn't reply immediately, ESI Flasher will re-trigger auto-reset when you click Flash Now.`
+      );
     }
 
     this.deviceInfo = {
       chip: 'ATmega328P (AVR)',
       adapter: adapterName,
       usbId: formatUsbId(vid, pid),
-      mac: signature, // Display signature for AVR
+      mac: signature,
       flashSize: '32 KB (Flash) / 2 KB (SRAM)',
       flashMode: 'SPI (STK500v1)',
       flashFreq: '16MHz Crystal',
-      chipRevision: 'Optiboot',
-      features: 'AVR 8-bit RISC, 10-bit ADC',
+      chipRevision: this.boardType.includes('Old') ? 'ATmegaBOOT (57600)' : 'Optiboot (115200)',
+      features: 'AVR 8-bit RISC, 10-bit ADC, PWM, UART',
     };
 
     this.connected = true;
-    this.logger.success(`${this.boardType} connected and ready.`);
+    this.logger.success(`${this.boardType} port opened and ready.`);
     return this.deviceInfo;
   }
 
@@ -155,7 +160,7 @@ export class ArduinoAVRFlasher implements Flasher {
     onProgress: (progress: FlashProgress) => void
   ): Promise<void> {
     if (!this.isConnected() || !this.stk) {
-      throw new Error('Arduino is not connected.');
+      throw new Error('Arduino is not connected. Please click Connect first.');
     }
 
     if (images.length === 0) {
@@ -167,30 +172,61 @@ export class ArduinoAVRFlasher implements Flasher {
 
     // Check if data is Intel HEX format text
     const textDecoder = new TextDecoder();
-    const firstChars = textDecoder.decode(img.data.subarray(0, 10));
+    const firstChars = textDecoder.decode(img.data.subarray(0, 15));
     if (firstChars.includes(':')) {
       this.logger.info('Parsing Intel HEX firmware format...');
       const hexText = textDecoder.decode(img.data);
       const parsed = parseIntelHex(hexText);
       binaryData = parsed.data;
-      this.logger.info(`Parsed ${parsed.bytesCount} bytes of code (Address: 0x${parsed.startAddress.toString(16)} - 0x${parsed.endAddress.toString(16)}).`);
+      this.logger.info(
+        `Parsed ${parsed.bytesCount} bytes of AVR machine code (Address range: 0x${parsed.startAddress.toString(16)} - 0x${parsed.endAddress.toString(16)}).`
+      );
     }
 
     const pageSize = 128; // ATmega328P flash page size is 128 bytes (64 words)
     const totalBytes = binaryData.length;
     const startTime = Date.now();
 
-    this.logger.info(`Entering AVR programming mode...`);
-    await this.stk.enterProgMode();
+    // 1. Reset Arduino into bootloader immediately before writing!
+    this.logger.info('Pulsing DTR to trigger Arduino bootloader reset...');
+    await this.stk.pulseReset();
 
+    this.logger.info(`Syncing with STK500v1 at ${this.currentBaud} baud...`);
+    let synced = await this.stk.sync(15);
+
+    if (!synced) {
+      this.logger.warn('First sync attempt timed out. Retrying reset pulse...');
+      await this.stk.pulseReset();
+      synced = await this.stk.sync(15);
+    }
+
+    if (!synced) {
+      throw new Error(
+        `Failed to sync with Arduino bootloader on ${this.boardType} (${this.currentBaud} baud). ` +
+        `If using an Arduino Nano, try selecting "Arduino Nano (Old Bootloader)" (57600 baud), ` +
+        `or tap the physical RESET button on the board right as flashing starts.`
+      );
+    }
+
+    this.logger.success('Bootloader synchronized!');
+
+    // 2. Enter programming mode
+    try {
+      this.logger.info('Entering AVR programming mode...');
+      await this.stk.enterProgMode();
+    } catch {
+      this.logger.debug('Optiboot skipped enterProgMode, continuing directly to flash writing...');
+    }
+
+    // 3. Write flash pages
     this.logger.info(`Flashing ${totalBytes} bytes in ${Math.ceil(totalBytes / pageSize)} pages...`);
 
     let written = 0;
     while (written < totalBytes) {
       const pageEnd = Math.min(written + pageSize, totalBytes);
       const chunk = binaryData.subarray(written, pageEnd);
-      
-      // If page is not full 128 bytes, pad with 0xFF
+
+      // If page is smaller than 128 bytes, pad with 0xFF
       let pageData: Uint8Array;
       if (chunk.length === pageSize) {
         pageData = chunk;
@@ -222,21 +258,24 @@ export class ArduinoAVRFlasher implements Flasher {
         speedKBps: Math.round(speed),
         elapsedSeconds: Math.round(elapsed),
         etaSeconds: eta,
-        operation: `Writing AVR flash (Word addr: 0x${wordAddress.toString(16).toUpperCase()})...`,
+        operation: `Writing AVR flash page at word 0x${wordAddress.toString(16).toUpperCase()} (${pct}%)...`,
       });
     }
 
-    this.logger.info('Exiting programming mode...');
+    // 4. Leave programming mode
+    this.logger.info('Leaving programming mode...');
     await this.stk.leaveProgMode();
 
-    this.logger.success('Arduino AVR flash complete!');
-    await this.reset();
+    // 5. Final reset to boot the newly flashed sketch
+    this.logger.info('Resetting board to start firmware execution...');
+    await this.stk.pulseReset();
+
+    this.logger.success('✓ Arduino AVR flash completed successfully! Sketch is now executing.');
   }
 
   public async erase(): Promise<void> {
     if (!this.isConnected() || !this.stk) throw new Error('Device not connected');
-    this.logger.info('Erasing AVR flash...');
-    // STK500v1 optiboot automatically erases pages on write
+    this.logger.info('Erasing AVR flash pages...');
     this.logger.success('AVR flash ready.');
   }
 

@@ -142,6 +142,14 @@ export function useFlasherStore() {
   }, []);
 
   const selectPublishedFirmware = useCallback((fw: PublishedFirmware) => {
+    // Automatically match board family & chip to selected firmware
+    if (fw.board) {
+      setBoardFamily(fw.board);
+      if (fw.chip) {
+        setSelectedChip(fw.chip as TargetChip);
+      }
+    }
+
     const images: FirmwareImageItem[] = fw.images.map((img, idx) => ({
       id: `${fw.id}-${idx}`,
       name: img.name,
@@ -160,8 +168,8 @@ export function useFlasherStore() {
       source: 'library',
     });
 
-    terminalStore.addLog('info', `Firmware selected: ${fw.name} (${fw.version})`);
-  }, []);
+    terminalStore.addLog('info', `Firmware selected: ${fw.name} (${fw.version}) for ${fw.board}`);
+  }, [setBoardFamily, setSelectedChip]);
 
   const setCustomImages = useCallback((images: FirmwareImageItem[], name = 'Custom Firmware') => {
     setSelectedImages(images);
