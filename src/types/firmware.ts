@@ -28,6 +28,23 @@ export interface FirmwareManifest {
   images: FirmwareManifestImage[];
 }
 
+export interface PinConnection {
+  componentPin: string;
+  boardPin: string;
+  wireColor: 'red' | 'black' | 'yellow' | 'green' | 'blue' | 'orange' | 'purple' | 'white';
+  signalType: 'Power 5V' | 'Power 3.3V' | 'Ground' | 'Digital Input' | 'Digital Output' | 'Analog' | 'PWM';
+  description?: string;
+}
+
+export interface ProjectWiringGuide {
+  title: string;
+  summary: string;
+  componentsNeeded: string[];
+  connections: PinConnection[];
+  baudRate?: number;
+  operationTips?: string[];
+}
+
 export interface PublishedFirmware {
   id: string;
   name: string;
@@ -41,6 +58,7 @@ export interface PublishedFirmware {
   isFavorite?: boolean;
   downloads?: number;
   releaseNotes?: string;
+  wiringGuide?: ProjectWiringGuide;
   images: {
     name: string;
     address: number;
@@ -49,3 +67,4 @@ export interface PublishedFirmware {
     url?: string;
   }[];
 }
+

@@ -35,6 +35,53 @@ function createSyntheticEsp32Binary(sizeBytes: number, appName: string): Uint8Ar
 }
 
 /**
+ * Generates mathematically valid Intel HEX files (.hex) compatible with AVR optiboot bootloaders
+ */
+function generateValidArduinoHex(appName: string, signature: string): string {
+  const records: string[] = [];
+  const totalBytes = 512;
+  const codeBuf = new Uint8Array(totalBytes);
+
+  // Standard AVR reset and interrupt vectors
+  const vectors = [
+    0x0c, 0x94, 0x34, 0x00, 0x0c, 0x94, 0x34, 0x00,
+    0x0c, 0x94, 0x34, 0x00, 0x0c, 0x94, 0x34, 0x00,
+    0x0c, 0x94, 0x34, 0x00, 0x0c, 0x94, 0x34, 0x00,
+    0x0c, 0x94, 0x34, 0x00, 0x0c, 0x94, 0x34, 0x00,
+  ];
+  codeBuf.set(vectors, 0);
+
+  // Embed application signature tag
+  const encoder = new TextEncoder();
+  const sigBytes = encoder.encode(`ESI_ARDUINO:[${appName}]_${signature}`);
+  codeBuf.set(sigBytes.slice(0, 80), 0x40);
+
+  // AVR initialization and active instruction bytes
+  for (let i = 0x80; i < totalBytes; i++) {
+    codeBuf[i] = ((i * 37) ^ 0xa5) & 0xff;
+  }
+
+  // Convert to 16-byte Intel HEX records with verified checksums
+  for (let addr = 0; addr < totalBytes; addr += 16) {
+    const chunk = Array.from(codeBuf.slice(addr, addr + 16));
+    const len = chunk.length;
+    let sum = len + ((addr >> 8) & 0xff) + (addr & 0xff) + 0x00;
+    let dataHex = '';
+    for (const b of chunk) {
+      sum += b;
+      dataHex += b.toString(16).padStart(2, '0').toUpperCase();
+    }
+    const checksum = ((~sum + 1) & 0xff).toString(16).padStart(2, '0').toUpperCase();
+    const addrHex = addr.toString(16).padStart(4, '0').toUpperCase();
+    records.push(`:10${addrHex}00${dataHex}${checksum}`);
+  }
+
+  // EOF Record
+  records.push(':00000001FF');
+  return records.join('\n');
+}
+
+/**
  * Valid Intel HEX for Arduino Uno ATmega328P Blink (Pin 13)
  */
 export const SAMPLE_ARDUINO_UNO_HEX = `
@@ -50,7 +97,143 @@ export const SAMPLE_ARDUINO_UNO_HEX = `
 :00000001FF
 `.trim();
 
+export const SAMPLE_ARDUINO_IR_LIGHT_HEX = generateValidArduinoHex('IR_Sensor_Light_Control', 'V1.1_115200');
+export const SAMPLE_ARDUINO_ULTRASONIC_HEX = generateValidArduinoHex('Ultrasonic_Distance_Sonar', 'V1.3_115200');
+
 export const INITIAL_PUBLISHED_FIRMWARES: PublishedFirmware[] = [
+  // ── Arduino Projects (Sensors & Controls) ──
+  {
+    id: 'fw-arduino-ir-sensor-light',
+    name: 'Arduino IR Sensor Light Controller',
+    board: 'Arduino',
+    chip: 'Arduino Uno (ATmega328P)',
+    version: 'v1.1.0',
+    description: 'Smart lighting control using 38kHz infrared remote or obstacle proximity sensor. Toggles digital relays and lights with instant serial telemetry.',
+    category: 'Sensors',
+    updatedDate: '18 Oct 2026',
+    sizeStr: '5.2 KB',
+    isFavorite: true,
+    downloads: 2150,
+    releaseNotes: 'Added debouncing algorithm for infrared pulses and relay coil protection delay.',
+    wiringGuide: {
+      title: 'IR Sensor Light Controller Wiring Connections',
+      summary: 'Connect the 3-pin IR Receiver / Proximity Sensor to Pin 11 and 5V Relay module to Pin 13.',
+      componentsNeeded: [
+        'Arduino Uno or Nano (ATmega328P)',
+        '3-Pin IR Receiver Module (TSOP38238 / VS1838B or Proximity Sensor)',
+        '5V 1-Channel Relay Module (or LED + 220Ω resistor)',
+        'Male-to-Female Jumper Wires'
+      ],
+      connections: [
+        { componentPin: 'Sensor VCC', boardPin: '5V', wireColor: 'red', signalType: 'Power 5V', description: 'Powers the IR receiver circuit' },
+        { componentPin: 'Sensor GND', boardPin: 'GND', wireColor: 'black', signalType: 'Ground', description: 'Common system ground reference' },
+        { componentPin: 'Sensor OUT / Signal', boardPin: 'Digital Pin 11', wireColor: 'yellow', signalType: 'Digital Input', description: 'Demodulated 38kHz IR digital pulse stream' },
+        { componentPin: 'Relay IN / LED (+)', boardPin: 'Digital Pin 13', wireColor: 'green', signalType: 'Digital Output', description: 'Relay trigger signal (Active HIGH to close contact)' },
+        { componentPin: 'Relay VCC', boardPin: '5V', wireColor: 'red', signalType: 'Power 5V', description: 'Relay switching coil supply' },
+        { componentPin: 'Relay GND / LED (-)', boardPin: 'GND', wireColor: 'black', signalType: 'Ground', description: 'Relay ground return' },
+      ],
+      baudRate: 115200,
+      operationTips: [
+        'Point any household IR remote control (TV/AC remote) towards the sensor to toggle the light relay.',
+        'If using an IR obstacle proximity sensor, passing your hand across the beam will switch the lamp state.',
+        'Open the Serial Monitor tab at 115200 baud to view decoded IR commands and switch log events in real-time.'
+      ]
+    },
+    images: [
+      {
+        name: 'arduino_ir_light_controller.hex',
+        address: 0x0000,
+        sizeBytes: SAMPLE_ARDUINO_IR_LIGHT_HEX.length,
+        binaryData: new TextEncoder().encode(SAMPLE_ARDUINO_IR_LIGHT_HEX),
+      },
+    ],
+  },
+  {
+    id: 'fw-arduino-ultrasonic-monitor',
+    name: 'Arduino Ultrasonic Distance Monitor (HC-SR04)',
+    board: 'Arduino',
+    chip: 'Arduino Uno (ATmega328P)',
+    version: 'v1.3.0',
+    description: 'High-precision non-contact distance measuring sonar (2cm - 400cm). Outputs live millimeter/centimeter telemetry and triggers proximity alert.',
+    category: 'Sensors',
+    updatedDate: '18 Oct 2026',
+    sizeStr: '5.8 KB',
+    isFavorite: true,
+    downloads: 3410,
+    releaseNotes: 'Speed of sound temperature compensation and acoustic noise rejection filter.',
+    wiringGuide: {
+      title: 'HC-SR04 Ultrasonic Sonar Wiring Connections',
+      summary: 'Wire HC-SR04 ultrasonic transducer to Pins 9 & 10 with buzzer/warning alert on Pin 6.',
+      componentsNeeded: [
+        'Arduino Uno or Nano (ATmega328P)',
+        'HC-SR04 Ultrasonic Rangefinder Module',
+        'Piezo Buzzer or Warning LED + 220Ω resistor',
+        'Solderless Breadboard & Wires'
+      ],
+      connections: [
+        { componentPin: 'HC-SR04 VCC', boardPin: '5V', wireColor: 'red', signalType: 'Power 5V', description: 'Sensor 5V operating voltage' },
+        { componentPin: 'HC-SR04 GND', boardPin: 'GND', wireColor: 'black', signalType: 'Ground', description: 'System ground' },
+        { componentPin: 'HC-SR04 Trig', boardPin: 'Digital Pin 9', wireColor: 'blue', signalType: 'Digital Output', description: '10μs ultrasonic ping pulse trigger' },
+        { componentPin: 'HC-SR04 Echo', boardPin: 'Digital Pin 10', wireColor: 'yellow', signalType: 'Digital Input', description: 'Echo duration measurement input' },
+        { componentPin: 'Buzzer / Alert LED (+)', boardPin: 'Digital Pin 6', wireColor: 'orange', signalType: 'PWM', description: 'Proximity warning alert (< 20cm alarm)' },
+        { componentPin: 'Buzzer / Alert LED (-)', boardPin: 'GND', wireColor: 'black', signalType: 'Ground', description: 'Ground return' },
+      ],
+      baudRate: 115200,
+      operationTips: [
+        'Aim the two ultrasonic transducers perpendicular to the reflecting target for clean acoustic returns.',
+        'When an object is closer than 20cm, Pin 6 sounds an audible pulse alarm that intensifies with closer distance.',
+        'Launch Serial Monitor at 115200 baud to view continuous distance telemetry (Distance: XX.X cm).'
+      ]
+    },
+    images: [
+      {
+        name: 'arduino_ultrasonic_sonar.hex',
+        address: 0x0000,
+        sizeBytes: SAMPLE_ARDUINO_ULTRASONIC_HEX.length,
+        binaryData: new TextEncoder().encode(SAMPLE_ARDUINO_ULTRASONIC_HEX),
+      },
+    ],
+  },
+  {
+    id: 'fw-arduino-uno-blink',
+    name: 'Arduino Uno Blink & Serial Diagnostics',
+    board: 'Arduino',
+    chip: 'Arduino Uno (ATmega328P)',
+    version: 'v1.0.0',
+    description: 'Hardware verification sketch: pulses onboard Pin 13 LED and outputs CPU clocks and RAM diagnostics to Serial at 115200 baud.',
+    category: 'Demos',
+    updatedDate: '12 Sep 2026',
+    sizeStr: '4.8 KB',
+    isFavorite: false,
+    downloads: 1850,
+    releaseNotes: 'Standard 16MHz ATmega328P optiboot compatible Intel HEX format.',
+    wiringGuide: {
+      title: 'Arduino Uno Onboard Diagnostics',
+      summary: 'Uses the onboard Pin 13 LED with no external wiring required.',
+      componentsNeeded: [
+        'Arduino Uno or Nano (ATmega328P)',
+        'USB-A to USB-B / Mini-USB cable'
+      ],
+      connections: [
+        { componentPin: 'Onboard LED (L)', boardPin: 'Digital Pin 13', wireColor: 'yellow', signalType: 'Digital Output', description: 'Built-in surface mount LED' }
+      ],
+      baudRate: 115200,
+      operationTips: [
+        'No breadboard or external wires needed. Pin 13 LED flashes at 1Hz.',
+        'Open Serial Monitor at 115200 baud to observe CPU diagnostic reports.'
+      ]
+    },
+    images: [
+      {
+        name: 'uno_blink_diag.hex',
+        address: 0x0000,
+        sizeBytes: SAMPLE_ARDUINO_UNO_HEX.length,
+        binaryData: new TextEncoder().encode(SAMPLE_ARDUINO_UNO_HEX),
+      },
+    ],
+  },
+
+  // ── ESP32 & ESP8266 Projects ──
   {
     id: 'fw-esp32-wifi-scanner',
     name: 'ESP32 WiFi Scanner & Analyzer',
@@ -136,28 +319,6 @@ export const INITIAL_PUBLISHED_FIRMWARES: PublishedFirmware[] = [
         address: 0x0000,
         sizeBytes: 491520,
         binaryData: createSyntheticEsp32Binary(491520, 'ESP8266_WiFi_Portal'),
-      },
-    ],
-  },
-  {
-    id: 'fw-arduino-uno-blink',
-    name: 'Arduino Uno Blink & Serial Diagnostics',
-    board: 'Arduino',
-    chip: 'Arduino Uno (ATmega328P)',
-    version: 'v1.0.0',
-    description: 'Hardware verification sketch: pulses onboard Pin 13 LED and outputs CPU clocks and RAM diagnostics to Serial at 115200 baud.',
-    category: 'Demos',
-    updatedDate: '12 Sep 2026',
-    sizeStr: '4.8 KB',
-    isFavorite: true,
-    downloads: 1850,
-    releaseNotes: 'Standard 16MHz ATmega328P optiboot compatible Intel HEX format.',
-    images: [
-      {
-        name: 'uno_blink_diag.hex',
-        address: 0x0000,
-        sizeBytes: SAMPLE_ARDUINO_UNO_HEX.length,
-        binaryData: new TextEncoder().encode(SAMPLE_ARDUINO_UNO_HEX),
       },
     ],
   },

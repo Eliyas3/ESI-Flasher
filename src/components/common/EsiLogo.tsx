@@ -21,17 +21,23 @@ export const EsiLogo: React.FC<EsiLogoProps> = ({
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       {/* High clarity enhanced logo mark with sleek ambient glow */}
-      <div className={`relative ${sizeMap[size]} flex-shrink-0 group`}>
-        <div className="absolute inset-0 bg-blue-500/20 rounded-xl blur-md group-hover:bg-blue-500/35 transition-all duration-300 pointer-events-none" />
-        <img
-          src="/logo-enhanced.png"
-          alt="Eliyas Science Info Logo"
-          className="relative w-full h-full object-contain drop-shadow-md select-none transform transition-transform duration-300 group-hover:scale-105"
-          onError={(e) => {
-            // Fallback to SVG vector version if PNG has any issue
-            (e.target as HTMLImageElement).src = '/logo.svg';
-          }}
-        />
+      {/* Background is PERMANENTLY deep black - never changes to white even if site theme is changed to white */}
+      <div className={`relative ${sizeMap[size]} flex-shrink-0 group select-none`}>
+        {/* Ambient backlight glow */}
+        <div className="absolute -inset-0.5 bg-blue-600/30 rounded-xl blur-sm group-hover:bg-blue-500/60 transition-all duration-300 pointer-events-none" />
+        
+        {/* Solid Black Badge Container - strictly black in all themes */}
+        <div className="relative w-full h-full bg-[#05070e] rounded-xl p-1 border border-slate-800/90 shadow-md flex items-center justify-center overflow-hidden ring-1 ring-white/10 group-hover:border-blue-500/50 transition-all">
+          <img
+            src="/logo-enhanced.png"
+            alt="Eliyas Science Info Logo"
+            className="w-full h-full object-contain drop-shadow-md select-none transform transition-transform duration-300 group-hover:scale-105"
+            onError={(e) => {
+              // Fallback to SVG vector version if PNG has any issue
+              (e.target as HTMLImageElement).src = '/logo.svg';
+            }}
+          />
+        </div>
       </div>
 
       {showText && (
@@ -45,7 +51,7 @@ export const EsiLogo: React.FC<EsiLogoProps> = ({
             </span>
           </div>
           <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            ESI Embedded Systems Suite
+            Professional Web Serial Embedded Flasher
           </span>
         </div>
       )}

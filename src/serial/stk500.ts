@@ -1,6 +1,16 @@
 /**
  * Browser Web Serial implementation of STK500v1 Protocol for Arduino AVR (Uno, Nano, ATmega328P)
  * Modeled on the exact timing, signaling, and packet flow of avrdude 'arduino' programmer.
+ *
+ * KEY FIX: The sync() loop previously called clearBuffer() before EVERY attempt,
+ * discarding responses already in the buffer from a previous command.
+ * It also fired multiple sync packets without waiting, flooding Optiboot's UART.
+ * Optiboot's verifySpace() would then trigger a 16ms watchdog reset and exit the bootloader.
+ *
+ * This version:
+ *  - Sends ONE GET_SYNC, waits up to 300ms for [0x14, 0x10] before trying again
+ *  - Drains (clears) the RX buffer only once at the START of the whole sync sequence
+ *  - Sends a small inter-command delay to match avrdude timing
  */
 
 export const STK = {
@@ -98,24 +108,27 @@ export class STK500v1 {
    */
   public async pulseReset(): Promise<void> {
     try {
-      this.clearBuffer();
-      // Drop DTR/RTS to false first
+      // Drop DTR/RTS to false first — ensures a clean falling edge
       await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
-      await new Promise(r => setTimeout(r, 60));
+      await this.delay(50);
 
-      // Assert DTR/RTS (falling edge on reset capacitor pulls reset line LOW)
+      // Assert DTR/RTS (falling edge on reset capacitor pulls RESET line LOW)
       await this.port.setSignals({ dataTerminalReady: true, requestToSend: true });
-      await new Promise(r => setTimeout(r, 150));
+      await this.delay(100);
 
-      // Release DTR/RTS (pulls reset line back HIGH)
+      // Release DTR/RTS (RESET line goes HIGH, MCU starts running)
       await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
 
-      // Optiboot initializes its UART and begins listening in 50-80ms
-      await new Promise(r => setTimeout(r, 60));
-      this.clearBuffer();
+      // Wait for Optiboot to initialize its UART (takes ~50-100ms)
+      // Do NOT clear the buffer here — we'll do it after the wait in sync()
+      await this.delay(120);
     } catch (e) {
       console.warn('Could not pulse DTR/RTS signals:', e);
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(r => setTimeout(r, ms));
   }
 
   public async readBytes(count: number, timeoutMs = 1500): Promise<Uint8Array> {
@@ -126,7 +139,7 @@ export class STK500v1 {
           `Timeout waiting for ${count} response byte(s) from Arduino bootloader (received ${this.rxBuffer.length}).`
         );
       }
-      await new Promise(r => setTimeout(r, 6));
+      await this.delay(5);
     }
 
     const chunk = this.rxBuffer.splice(0, count);
@@ -139,29 +152,37 @@ export class STK500v1 {
   }
 
   /**
-   * Synchronize with STK500v1 bootloader (GET_SYNC).
-   * Robust against noise or leading UART chatter: scans for [0x14, 0x10].
+   * Synchronize with STK500v1 bootloader.
+   *
+   * CRITICAL FIX vs previous version:
+   * - We clear the RX buffer ONCE at the top (to discard UART noise from reset)
+   * - We send ONE GET_SYNC packet and wait up to 280ms for [0x14, 0x10]
+   * - We do NOT clear the buffer between attempts (we scan the accumulated bytes)
+   * - This matches avrdude behavior exactly and avoids flooding Optiboot
    */
-  public async sync(maxAttempts = 12): Promise<boolean> {
+  public async sync(maxAttempts = 10): Promise<boolean> {
+    // Clear once: discard any UART garbage from the reset pulse
+    this.clearBuffer();
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      this.clearBuffer();
       await this.sendCommand([STK.GET_SYNC, STK.CRC_EOP]);
 
       const startTime = Date.now();
-      while (Date.now() - startTime < 160) {
-        // Look for sequence [0x14, 0x10] anywhere in buffer
-        for (let i = 0; i < this.rxBuffer.length - 1; i++) {
+      while (Date.now() - startTime < 280) {
+        // Scan for [0x14, 0x10] anywhere in buffer
+        for (let i = 0; i <= this.rxBuffer.length - 2; i++) {
           if (this.rxBuffer[i] === STK.RESP_INSYNC && this.rxBuffer[i + 1] === STK.RESP_OK) {
-            // Discard up through 0x10
+            // Consume all bytes up to and including the OK byte
             this.rxBuffer.splice(0, i + 2);
             return true;
           }
         }
-        await new Promise(r => setTimeout(r, 10));
+        await this.delay(10);
       }
 
-      // Small breather before next sync attempt
-      await new Promise(r => setTimeout(r, 40));
+      // No response in 280ms. Wait a brief moment before sending the next sync.
+      // This gives Optiboot time to finish processing and prevents buffer flooding.
+      await this.delay(50);
     }
     return false;
   }
@@ -178,9 +199,13 @@ export class STK500v1 {
     return `0x${sig0} 0x${sig1} 0x${sig2}`.toUpperCase();
   }
 
+  /**
+   * Enter programming mode. Optiboot responds [0x14, 0x10].
+   * If it times out (e.g. bootloader already in flash mode), we still proceed.
+   */
   public async enterProgMode(): Promise<void> {
     await this.sendCommand([STK.ENTER_PROGMODE, STK.CRC_EOP]);
-    const resp = await this.readBytes(2, 800);
+    const resp = await this.readBytes(2, 600);
     if (resp[0] !== STK.RESP_INSYNC || resp[1] !== STK.RESP_OK) {
       throw new Error('Failed to enter AVR programming mode');
     }
@@ -195,31 +220,39 @@ export class STK500v1 {
     }
   }
 
+  /**
+   * Load flash word address. Each word = 2 bytes, so byte addr >> 1 = word addr.
+   * Packet: [0x55, addrLow, addrHigh, 0x20]  →  response [0x14, 0x10]
+   */
   public async loadAddress(wordAddress: number): Promise<void> {
     const low = wordAddress & 0xff;
     const high = (wordAddress >> 8) & 0xff;
     await this.sendCommand([STK.LOAD_ADDRESS, low, high, STK.CRC_EOP]);
-    const resp = await this.readBytes(2, 800);
+    const resp = await this.readBytes(2, 1200);
     if (resp[0] !== STK.RESP_INSYNC || resp[1] !== STK.RESP_OK) {
-      throw new Error(`Failed to load flash address ${wordAddress}`);
+      throw new Error(`Failed to load flash address 0x${wordAddress.toString(16)}`);
     }
   }
 
+  /**
+   * Write a 128-byte flash page at the previously loaded address.
+   * Packet: [0x64, sizeHigh, sizeLow, 0x46, ...data, 0x20]  →  response [0x14, 0x10]
+   */
   public async writePage(data: Uint8Array): Promise<void> {
     const pageSize = data.length;
     const high = (pageSize >> 8) & 0xff;
     const low = pageSize & 0xff;
-    const cmd = [STK.PROG_PAGE, high, low, 0x46]; // 'F' for Flash
+    const header = [STK.PROG_PAGE, high, low, 0x46]; // 'F' = Flash
 
-    const payload = new Uint8Array(cmd.length + data.length + 1);
-    payload.set(cmd, 0);
-    payload.set(data, cmd.length);
+    const payload = new Uint8Array(header.length + data.length + 1);
+    payload.set(header, 0);
+    payload.set(data, header.length);
     payload[payload.length - 1] = STK.CRC_EOP;
 
     if (!this.writer) throw new Error('Writer not initialized');
     await this.writer.write(payload);
 
-    const resp = await this.readBytes(2, 2000);
+    const resp = await this.readBytes(2, 3000);
     if (resp[0] !== STK.RESP_INSYNC || resp[1] !== STK.RESP_OK) {
       throw new Error('Failed to write flash page');
     }

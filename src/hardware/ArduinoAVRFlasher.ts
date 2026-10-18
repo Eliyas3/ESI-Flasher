@@ -88,12 +88,12 @@ export class ArduinoAVRFlasher implements Flasher {
     await this.stk.pulseReset();
 
     this.logger.info('Syncing with STK500v1 bootloader (GET_SYNC)...');
-    let synced = await this.stk.sync(12);
+    let synced = await this.stk.sync(10);
 
     if (!synced) {
-      this.logger.warn('Initial sync attempt took longer than expected, retrying reset pulse...');
+      this.logger.warn('Initial sync attempt timed out, retrying reset pulse...');
       await this.stk.pulseReset();
-      synced = await this.stk.sync(12);
+      synced = await this.stk.sync(10);
     }
 
     let signature = '0x1E 0x95 0x0F (ATmega328P)';
@@ -108,7 +108,7 @@ export class ArduinoAVRFlasher implements Flasher {
       }
     } else {
       this.logger.warn(
-        `Port connected. If bootloader didn't reply immediately, ESI Flasher will re-trigger auto-reset when you click Flash Now.`
+        `Port connected. Bootloader did not reply — ESI Flasher will re-trigger auto-reset when you click Flash Now.`
       );
     }
 
@@ -183,21 +183,27 @@ export class ArduinoAVRFlasher implements Flasher {
       );
     }
 
-    const pageSize = 128; // ATmega328P flash page size is 128 bytes (64 words)
+    const pageSize = 128; // ATmega328P flash page size = 128 bytes (64 words)
     const totalBytes = binaryData.length;
     const startTime = Date.now();
 
-    // 1. Reset Arduino into bootloader immediately before writing!
+    // ─── STEP 1: Reset Arduino into bootloader ────────────────────────────────
     this.logger.info('Pulsing DTR to trigger Arduino bootloader reset...');
     await this.stk.pulseReset();
+    // pulseReset() already waits 120ms after releasing. Give it a bit more to
+    // be safe before we start syncing.
+    await new Promise(r => setTimeout(r, 50));
 
+    // ─── STEP 2: Synchronise ─────────────────────────────────────────────────
+    // Optiboot bootloader window is ~1 second; we have plenty of time.
     this.logger.info(`Syncing with STK500v1 at ${this.currentBaud} baud...`);
-    let synced = await this.stk.sync(15);
+    let synced = await this.stk.sync(10);
 
     if (!synced) {
       this.logger.warn('First sync attempt timed out. Retrying reset pulse...');
       await this.stk.pulseReset();
-      synced = await this.stk.sync(15);
+      await new Promise(r => setTimeout(r, 50));
+      synced = await this.stk.sync(10);
     }
 
     if (!synced) {
@@ -210,44 +216,53 @@ export class ArduinoAVRFlasher implements Flasher {
 
     this.logger.success('Bootloader synchronized!');
 
-    // 2. Enter programming mode
+    // ─── STEP 3: Enter programming mode ──────────────────────────────────────
+    // Optiboot accepts ENTER_PROGMODE but responds immediately and moves on.
+    // We send it and wait — if it times out that's fine (some Optiboot builds
+    // don't respond to enterProgMode at all, they just start accepting flash cmds).
+    this.logger.info('Entering AVR programming mode...');
     try {
-      this.logger.info('Entering AVR programming mode...');
       await this.stk.enterProgMode();
+      this.logger.debug('AVR programming mode confirmed.');
     } catch {
-      this.logger.debug('Optiboot skipped enterProgMode, continuing directly to flash writing...');
+      // Optiboot may not reply to enterProgMode — this is expected on many builds.
+      // We do NOT re-sync here; Optiboot's command parser is still alive.
+      this.logger.debug('Optiboot did not ACK enterProgMode — proceeding directly to flash write.');
     }
 
-    // 3. Write flash pages
-    this.logger.info(`Flashing ${totalBytes} bytes in ${Math.ceil(totalBytes / pageSize)} pages...`);
+    // ─── STEP 4: Write flash pages ───────────────────────────────────────────
+    const pageCount = Math.ceil(totalBytes / pageSize);
+    this.logger.info(`Flashing ${totalBytes} bytes in ${pageCount} pages...`);
 
     let written = 0;
+    let pageIndex = 0;
     while (written < totalBytes) {
       const pageEnd = Math.min(written + pageSize, totalBytes);
       const chunk = binaryData.subarray(written, pageEnd);
 
-      // If page is smaller than 128 bytes, pad with 0xFF
+      // Pad last page to full 128 bytes with 0xFF
       let pageData: Uint8Array;
       if (chunk.length === pageSize) {
         pageData = chunk;
       } else {
-        pageData = new Uint8Array(pageSize);
-        pageData.fill(0xff);
+        pageData = new Uint8Array(pageSize).fill(0xff);
         pageData.set(chunk);
       }
 
-      // Word address in flash (each word is 2 bytes)
+      // Word address: flash byte address / 2
       const wordAddress = written >> 1;
+
       await this.stk.loadAddress(wordAddress);
       await this.stk.writePage(pageData);
 
       written += chunk.length;
+      pageIndex++;
 
       const elapsed = (Date.now() - startTime) / 1000;
       const pct = Math.min(100, Math.round((written / totalBytes) * 100));
-      const speed = elapsed > 0 ? (written / 1024) / elapsed : 0;
+      const speed = elapsed > 0 ? written / 1024 / elapsed : 0;
       const remaining = Math.max(0, totalBytes - written);
-      const eta = speed > 0 ? Math.round((remaining / 1024) / speed) : 0;
+      const eta = speed > 0 ? Math.round(remaining / 1024 / speed) : 0;
 
       onProgress({
         fileIndex: 1,
@@ -258,19 +273,19 @@ export class ArduinoAVRFlasher implements Flasher {
         speedKBps: Math.round(speed),
         elapsedSeconds: Math.round(elapsed),
         etaSeconds: eta,
-        operation: `Writing AVR flash page at word 0x${wordAddress.toString(16).toUpperCase()} (${pct}%)...`,
+        operation: `Writing page ${pageIndex}/${pageCount} at word 0x${wordAddress.toString(16).toUpperCase()} (${pct}%)...`,
       });
     }
 
-    // 4. Leave programming mode
+    // ─── STEP 5: Leave programming mode & reset ──────────────────────────────
     this.logger.info('Leaving programming mode...');
     await this.stk.leaveProgMode();
 
-    // 5. Final reset to boot the newly flashed sketch
-    this.logger.info('Resetting board to start firmware execution...');
+    // Final reset so the user's newly flashed sketch starts executing
+    this.logger.info('Resetting board to execute new firmware...');
     await this.stk.pulseReset();
 
-    this.logger.success('✓ Arduino AVR flash completed successfully! Sketch is now executing.');
+    this.logger.success('✓ Arduino AVR flash completed successfully! Sketch is now running.');
   }
 
   public async erase(): Promise<void> {

@@ -10,7 +10,7 @@ import {
   TargetChip,
   ArduinoBoard
 } from '../types/hardware';
-import { FirmwareImageItem, PublishedFirmware } from '../types/firmware';
+import { FirmwareImageItem, PublishedFirmware, ProjectWiringGuide } from '../types/firmware';
 import { Flasher, FlasherLogger } from '../hardware/FlasherInterface';
 import { ESP32Flasher } from '../hardware/ESP32Flasher';
 import { ESP8266Flasher } from '../hardware/ESP8266Flasher';
@@ -32,6 +32,7 @@ export function useFlasherStore() {
     name: string;
     version: string;
     source: 'library' | 'custom';
+    wiringGuide?: ProjectWiringGuide;
   } | null>(null);
 
   const [flashProgress, setFlashProgress] = useState<FlashProgress | null>(null);
@@ -166,6 +167,7 @@ export function useFlasherStore() {
       name: fw.name,
       version: fw.version,
       source: 'library',
+      wiringGuide: fw.wiringGuide,
     });
 
     terminalStore.addLog('info', `Firmware selected: ${fw.name} (${fw.version}) for ${fw.board}`);
