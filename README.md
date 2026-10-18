@@ -2,20 +2,18 @@
 
 <div align="center">
 
-<img src="./public/logo.svg" alt="ESI Flasher Logo" width="120" height="120" />
+<img src="./public/logo-original.jpg" alt="ESI Flasher Logo" width="140" />
 
 ### **Professional Web Serial Embedded Flasher**
 *Flash ESP32, ESP8266, and Arduino microcontrollers directly from Google Chrome — 100% in-browser with zero desktop software or IDE installations.*
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Eliyas3/ESI-Flasher)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg?logo=typescript)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.3-61dafb.svg?logo=react)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-5.4-646CFF.svg?logo=vite)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com/)
 [![Web Serial API](https://img.shields.io/badge/Web%20Serial-W3C%20Standard-4285F4.svg?logo=google-chrome)](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
-[![Vercel Ready](https://img.shields.io/badge/Deployment-Vercel%20SPA-000000.svg?logo=vercel)](https://vercel.com)
 
-[Live Demo](https://github.com/Eliyas3/ESI-Flasher) • [Supported Hardware](#-supported-hardware--microcontrollers) • [Pinout Guides](#-interactive-pinout--wiring-guides) • [Vercel Deployment](#-deploying-to-vercel)
+[Live Demo](https://github.com/Eliyas3/ESI-Flasher) • [Supported Hardware](#-supported-hardware--microcontrollers) • [Built-in Projects](#-built-in-firmware-projects) • [Browser Support](#-browser-compatibility-matrix)
 
 </div>
 
@@ -39,7 +37,7 @@ All binary parsing, checksum validation, baud rate negotiation, bootloader synci
 - 🔌 **Full ESP32 Spectrum**: Official `esptool-js` engine with automatic chip detection (ESP32, S2, S3, C2, C3, C5, C6, H2).
 - 📟 **ESP8266 Support**: Full ROM flash support at baud rates up to 460,800 bps.
 - 🎛️ **Native Arduino AVR STK500v1 Engine**: In-browser STK500v1 bootloader protocol with DTR/RTS auto-reset pulse sequencing and Intel HEX parsing.
-- 📋 **Integrated Hardware Pinout Guides**: Select an example project to instantly view clean, color-coded wiring tables (Component Pin, Board Pin, Wire Color, Signal Type).
+- 📋 **Integrated Hardware Pinouts**: Select an example project from the dropdown to instantly view a clean, tabular pinout guide.
 - 🖥️ **Live Bi-Directional Serial Monitor**: Real-time terminal with configurable baud rates (9600 to 921600 bps), auto-scroll, log search/filtering, and interactive command sending.
 - 📜 **Local Flash History**: Preserves flash session records (board, firmware, size, duration, status) in IndexedDB.
 - 🌓 **Curated Dark & Light Mode**: Engineered with an aerospace-grade dark UI, high-contrast typography, and permanent brand accents.
@@ -61,99 +59,39 @@ All binary parsing, checksum validation, baud rate negotiation, bootloader synci
 
 ---
 
-## 📌 Interactive Pinout & Wiring Guides
+## 💡 Built-in Firmware Projects
 
-When you select an example project from the dropdown menu, ESI Flasher displays a single, neat connection table showing you exactly how to hook up your sensors and actuators:
+The flasher comes pre-loaded with verified, ready-to-flash example projects directly selectable from the **Example Projects dropdown**:
 
 ### 1. Arduino IR Sensor Light Controller
-| Component Pin | Board Pin | Wire Color | Signal Type | Function / Description |
-| :--- | :--- | :---: | :---: | :--- |
-| **Sensor VCC** | `5V` | 🔴 Red | Power 5V | Powers the 38kHz infrared receiver circuit |
-| **Sensor GND** | `GND` | ⚫ Black | Ground | Common system ground reference |
-| **Sensor OUT** | `Digital Pin 11` | 🟡 Yellow | Digital Input | Demodulated 38kHz IR digital pulse stream |
-| **Relay IN / LED (+)** | `Digital Pin 13` | 🟢 Green | Digital Output | Relay trigger signal (Active HIGH) |
-| **Relay VCC** | `5V` | 🔴 Red | Power 5V | Relay switching coil supply |
-| **Relay GND** | `GND` | ⚫ Black | Ground | Relay ground return |
+- **Board**: Arduino Uno / Nano (ATmega328P)
+- **Description**: Smart lighting automation using a 38kHz infrared receiver or proximity obstacle sensor. Toggles digital relays and lights with real-time serial event telemetry.
+- **Baud Rate**: 115,200 bps
 
 ### 2. Arduino Ultrasonic Distance Monitor (HC-SR04)
-| Component Pin | Board Pin | Wire Color | Signal Type | Function / Description |
-| :--- | :--- | :---: | :---: | :--- |
-| **HC-SR04 VCC** | `5V` | 🔴 Red | Power 5V | Sensor 5V operating supply |
-| **HC-SR04 GND** | `GND` | ⚫ Black | Ground | System ground |
-| **HC-SR04 Trig** | `Digital Pin 9` | 🔵 Blue | Digital Output | 10µs ultrasonic ping pulse trigger |
-| **HC-SR04 Echo** | `Digital Pin 10` | 🟡 Yellow | Digital Input | Acoustic echo duration return |
-| **Buzzer / Alert (+)** | `Digital Pin 6` | 🟠 Orange | PWM | Proximity warning alert (< 20cm alarm) |
-| **Buzzer / Alert (-)** | `GND` | ⚫ Black | Ground | Ground return |
+- **Board**: Arduino Uno / Nano (ATmega328P)
+- **Description**: High-precision non-contact ultrasonic distance measuring sonar (2cm – 400cm). Outputs live distance telemetry and triggers proximity alarms.
+- **Baud Rate**: 115,200 bps
 
----
+### 3. Arduino Uno Blink & Serial Diagnostics
+- **Board**: Arduino Uno (ATmega328P)
+- **Description**: Complete hardware self-test sketch pulsing onboard Pin 13 LED and streaming CPU clock speed, RAM usage, and uptime telemetry.
+- **Baud Rate**: 115,200 bps
 
-## ☁️ Deploying to Vercel
+### 4. ESP32 WiFi Scanner & Analyzer
+- **Board**: ESP32
+- **Description**: High-speed 2.4GHz WiFi spectral scanner with real-time RSSI signal telemetry, channel distribution analysis, and serial reporting.
+- **Baud Rate**: 115,200 bps
 
-This repository is pre-configured for **seamless zero-config deployment on Vercel**:
+### 5. ESP32 BLE Beacon & Advertisement Scanner
+- **Board**: ESP32
+- **Description**: Bluetooth Low Energy (BLE 5.0) advertising beacon and surrounding device telemetry scanner with signal strength measurement.
+- **Baud Rate**: 115,200 bps
 
-### Option 1: Automatic Vercel Git Integration (Recommended)
-1. Push this repository to your GitHub account (`https://github.com/Eliyas3/ESI-Flasher`).
-2. Go to [Vercel Dashboard](https://vercel.com/dashboard) and click **Add New Project**.
-3. Import the `ESI-Flasher` repository.
-4. Vercel automatically detects **Vite** as the framework preset:
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-   - **Install Command**: `npm install`
-5. Click **Deploy**. Your site will be live on an HTTPS-secured URL (e.g., `https://esi-flasher.vercel.app`).
-
-> [!IMPORTANT]
-> **Web Serial API requires HTTPS** in production. Vercel automatically provisions free SSL/TLS certificates, ensuring Web Serial works flawlessly out of the box.
-
-### Option 2: Deploying via Vercel CLI
-```bash
-# Install Vercel CLI globally
-npm i -g vercel
-
-# Deploy to preview
-vercel
-
-# Deploy to production
-vercel --prod
-```
-
-### Pre-configured `vercel.json`
-The repository includes a dedicated [vercel.json](vercel.json) ensuring:
-- SPA client-side routing rewrites (`/*` ➔ `/index.html`)
-- Optimized static asset headers and security policies
-
----
-
-## 💻 Local Development Setup
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18.x or v20.x recommended)
-- [Google Chrome](https://www.google.com/chrome/), [Microsoft Edge](https://www.microsoft.com/edge), or [Brave](https://brave.com/) (Web Serial API support required)
-
-### Setup Steps
-```bash
-# 1. Clone the repository
-git clone https://github.com/Eliyas3/ESI-Flasher.git
-
-# 2. Enter project directory
-cd ESI-Flasher
-
-# 3. Install dependencies
-npm install
-
-# 4. Launch development dev server
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in Google Chrome or Edge.
-
-### Building for Production
-```bash
-# Typecheck and compile optimized bundle to /dist
-npm run build
-
-# Preview production build locally
-npm run preview
-```
+### 6. ESP8266 Web Server & GPIO Switchboard
+- **Board**: ESP8266 (NodeMCU / D1 Mini)
+- **Description**: Standalone embedded HTTP web server hosting an in-browser control dashboard to toggle GPIO pins and relays across local WiFi.
+- **Baud Rate**: 115,200 bps
 
 ---
 
@@ -189,7 +127,7 @@ If your operating system does not automatically detect your development board, i
 
 ```
 ESI-Flasher/
-├── public/                 # Favicon, SVG logos, and manifest icons
+├── public/                 # Favicon, original logos, and manifest icons
 ├── src/
 │   ├── components/
 │   │   ├── admin/          # Admin Portal & manifest manager
